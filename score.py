@@ -116,18 +116,20 @@ def load_rttms(rttm_fns):
     """
     turns = []
     file_ids = set()
+    file_spks = {}
     for rttm_fn in rttm_fns:
         if not os.path.exists(rttm_fn):
             error('Unable to open RTTM file: %s' % rttm_fn)
             sys.exit(1)
         try:
-            turns_, _, file_ids_ = load_rttm(rttm_fn)
+            turns_, speaker_ids_, file_ids_ = load_rttm(rttm_fn)
             turns.extend(turns_)
             file_ids.update(file_ids_)
+            file_spks.update({list(file_ids_)[0]:len(speaker_ids_)})
         except IOError as e:
             error('Invalid RTTM file: %s. %s' % (rttm_fn, e))
             sys.exit(1)
-    return turns, file_ids
+    return turns, file_ids, file_spks
 
 
 def check_for_empty_files(ref_turns, sys_turns, uem):
@@ -153,8 +155,8 @@ def load_script_file(fn):
         return [line.decode('utf-8').strip() for line in f]
 
 
-def print_table(file_to_scores, global_scores, n_digits=2,
-                table_format='simple'):
+def print_table(file_to_scores, global_scores, ref_spks_len, sys_spks_len,
+                n_digits=2, table_format='simple'):
     """Pretty print scores as table.
 
     Parameters
@@ -184,20 +186,28 @@ def print_table(file_to_scores, global_scores, n_digits=2,
                  'H(sys|ref)',  # Conditional entropy of sys given ref.
                  'MI', # Mutual information.
                  'NMI', # Normalized mutual information.
+                 '#r', # Speakers number of reference.
+                 '#s', # Speakers number of system.
+                 's-r', # Speakers number diff (System - Reference)
                 ]
     rows = []
+    matched_spks_files = 0
     for file_id in sorted(iterkeys(file_to_scores)):
         scores = file_to_scores[file_id]
+        diff_spks = sys_spks_len[file_id] - ref_spks_len[file_id]
+        if diff_spks != 0:
+            matched_spks_files += 1
         row = [file_id, scores.der, scores.bcubed_precision,
                scores.bcubed_recall, scores.bcubed_f1, scores.tau_ref_sys,
                scores.tau_sys_ref, scores.ce_ref_sys, scores.ce_sys_ref,
-               scores.mi, scores.nmi]
+               scores.mi, scores.nmi,
+               ref_spks_len[file_id], sys_spks_len[file_id], diff_spks]
         rows.append(row)
-    rows.append(['*** OVERALL ***', global_scores.der, global_scores.bcubed_precision,
+    rows.append(['OVERALL', global_scores.der, global_scores.bcubed_precision,
                  global_scores.bcubed_recall, global_scores.bcubed_f1,
                  global_scores.tau_ref_sys, global_scores.tau_sys_ref,
                  global_scores.ce_ref_sys, global_scores.ce_sys_ref,
-                 global_scores.mi, global_scores.nmi])
+                 global_scores.mi, global_scores.nmi, '-', '-', matched_spks_files])
     floatfmt = '.%df' % n_digits
     tbl = tabulate(
         rows, headers=col_names, floatfmt=floatfmt, tablefmt=table_format)
@@ -270,9 +280,9 @@ if __name__ == '__main__':
     # Load speaker/reference speaker turns and UEM. If no UEM specified,
     # determine it automatically.
     info('Loading speaker turns from reference RTTMs...', file=sys.stderr)
-    ref_turns, ref_file_ids = load_rttms(args.ref_rttm_fns)
+    ref_turns, ref_file_ids, ref_spks_len = load_rttms(args.ref_rttm_fns)
     info('Loading speaker turns from system RTTMs...', file=sys.stderr)
-    sys_turns, sys_file_ids = load_rttms(args.sys_rttm_fns)
+    sys_turns, sys_file_ids, sys_spks_len = load_rttms(args.sys_rttm_fns)
     if args.uemf is not None:
         info('Loading universal evaluation map...', file=sys.stderr)
         uem = load_uem(args.uemf)
@@ -300,4 +310,5 @@ if __name__ == '__main__':
     file_to_scores, global_scores = score(
         ref_turns, sys_turns, uem, args.collar, args.ignore_overlaps,
         args.step)
-    print_table(file_to_scores, global_scores, args.n_digits, args.table_format)
+    print_table(file_to_scores, global_scores, ref_spks_len, sys_spks_len,
+                args.n_digits, args.table_format)
